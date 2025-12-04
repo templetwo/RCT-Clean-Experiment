@@ -29,8 +29,8 @@ quantization:
 # Training
 training:
   epochs: 10
-  batch_size: 2
-  gradient_accumulation_steps: 4   # Effective batch = 8
+  batch_size: 4                     # Increased from 2 (more memory available)
+  gradient_accumulation_steps: 2    # Reduced from 4 (effective batch = 8)
   learning_rate: 2.0e-4
   weight_decay: 0.01
   warmup_ratio: 0.03
