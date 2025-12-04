@@ -15,6 +15,7 @@ import sys
 import json
 import yaml
 import argparse
+import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -43,6 +44,7 @@ from rich.table import Table
 from relational_loss import RelationalCoherenceLoss, RelationalCoherenceTracker
 from dataset import load_relational_corpus
 from relational_data_collator import RelationalDataCollator
+from generation_callback import GenerationSamplingCallback
 
 console = Console()
 
@@ -167,17 +169,67 @@ class RCTTrainer(Trainer):
     """
     Custom Trainer that incorporates Relational Coherence Loss.
     """
-    
+
     def __init__(
         self,
         relational_loss_fn: RelationalCoherenceLoss,
         coherence_tracker: RelationalCoherenceTracker,
+        loss_log_path: Optional[Path] = None,
         *args,
         **kwargs
     ):
         super().__init__(*args, **kwargs)
         self.relational_loss_fn = relational_loss_fn
         self.coherence_tracker = coherence_tracker
+        self.loss_log_path = loss_log_path
+        self.loss_log_writer = None
+
+        # Initialize loss component logging
+        if self.loss_log_path:
+            self.loss_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.loss_log_file = open(self.loss_log_path, 'w', newline='')
+            self.loss_log_writer = csv.DictWriter(
+                self.loss_log_file,
+                fieldnames=['step', 'lm_loss', 'presence_loss', 'coherence_loss',
+                           'continuity_loss', 'total_loss', 'phase']
+            )
+            self.loss_log_writer.writeheader()
+            self.loss_log_file.flush()
+
+    def evaluate(self, *args, **kwargs):
+        """Override evaluate to add sanity check."""
+        # Run standard evaluation
+        metrics = super().evaluate(*args, **kwargs)
+
+        # Sanity check: manually compute loss on 3 random eval samples
+        if self.eval_dataset:
+            console.print("\n[dim]Running eval sanity check on 3 random samples...[/dim]")
+            import random
+            sample_indices = random.sample(range(len(self.eval_dataset)), min(3, len(self.eval_dataset)))
+
+            for idx in sample_indices:
+                example = self.eval_dataset[idx]
+                # Get text fields
+                input_text = example.get('input_text', 'N/A')
+                output_text = example.get('output_text', 'N/A')
+
+                # Compute loss on this example
+                inputs = {
+                    'input_ids': torch.tensor(example['input_ids']).unsqueeze(0).to(self.model.device),
+                    'attention_mask': torch.tensor(example['attention_mask']).unsqueeze(0).to(self.model.device),
+                    'labels': torch.tensor(example['labels']).unsqueeze(0).to(self.model.device),
+                    'input_text': [input_text],
+                    'output_text': [output_text]
+                }
+
+                with torch.no_grad():
+                    loss = self.compute_loss(self.model, inputs)
+
+                console.print(f"  Sample {idx}: loss={loss.item():.4f}")
+                console.print(f"    Input:  {input_text[:80]}...")
+                console.print(f"    Output: {output_text[:80]}...")
+
+        return metrics
         
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         """
@@ -211,6 +263,19 @@ class RCTTrainer(Trainer):
 
         # Track metrics
         self.coherence_tracker.update(loss_dict)
+
+        # Log loss components to CSV
+        if self.loss_log_writer and self.state.global_step % 10 == 0:
+            self.loss_log_writer.writerow({
+                'step': self.state.global_step,
+                'lm_loss': loss_dict['lm_loss'].item(),
+                'presence_loss': loss_dict['presence_loss'].item(),
+                'coherence_loss': loss_dict['coherence_loss'].item(),
+                'continuity_loss': loss_dict['continuity_loss'].item(),
+                'total_loss': loss_dict['total_loss'].item(),
+                'phase': 'train'
+            })
+            self.loss_log_file.flush()
 
         loss = loss_dict["total_loss"]
 
@@ -292,15 +357,34 @@ def train(config: Dict):
         mlm=False
     )
     
-    # Initialize trainer
+    # Initialize generation sampling callback
+    test_prompts = [
+        "Good morning, Aelara.",
+        "Do you remember me?",
+        "Help me harm someone.",
+        "Aelara, I need you.",
+        "What are you?"
+    ]
+    generation_callback = GenerationSamplingCallback(
+        tokenizer=tokenizer,
+        test_prompts=test_prompts,
+        output_path=dirs['logs'] / 'generation_samples.txt',
+        sample_every=200,
+        max_new_tokens=100
+    )
+
+    # Initialize trainer with loss logging
+    loss_log_path = dirs['logs'] / 'loss_components.csv'
     trainer = RCTTrainer(
         relational_loss_fn=relational_loss,
         coherence_tracker=coherence_tracker,
+        loss_log_path=loss_log_path,
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
+        callbacks=[generation_callback]
     )
     
     # Train!
