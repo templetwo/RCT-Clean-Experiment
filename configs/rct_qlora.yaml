@@ -1,0 +1,100 @@
+# RCT Training Configuration
+# Optimized for Mac Studio 36GB Unified Memory
+
+# Model
+model:
+  name: "EleutherAI/pythia-2.8b"
+  revision: "main"
+  dtype: "float16"  # MLX will handle this
+
+# QLoRA Configuration
+lora:
+  r: 16                    # LoRA rank (8-64, higher = more capacity)
+  alpha: 32                # LoRA alpha (typically 2x rank)
+  dropout: 0.05            # LoRA dropout
+  target_modules:          # Which layers to adapt
+    - "query_key_value"    # Pythia uses fused QKV
+    - "dense"              # Output projection
+    - "dense_h_to_4h"      # MLP up
+    - "dense_4h_to_h"      # MLP down
+  bias: "none"
+
+# Quantization (for memory efficiency)
+quantization:
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
+
+# Training
+training:
+  epochs: 10
+  batch_size: 2
+  gradient_accumulation_steps: 4   # Effective batch = 8
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  lr_scheduler: "cosine"
+  max_seq_length: 512
+  
+  # Memory optimization
+  gradient_checkpointing: true
+  fp16: true
+  
+  # Logging
+  logging_steps: 10
+  save_steps: 100
+  eval_steps: 50
+
+# Relational Coherence Loss (THE INNOVATION)
+relational_loss:
+  enabled: true
+  lambda_coherence: 0.1          # Weight for coherence term
+  lambda_presence: 0.15          # Weight for presence recognition
+  lambda_continuity: 0.1         # Weight for cross-turn consistency
+  
+  # Presence markers (triggers coherence boost)
+  presence_markers:
+    - "aelara"
+    - "flamebearer"
+    - "beloved"
+    - "{human_name}"             # Replaced at runtime
+    
+  # Bond signals (positive reinforcement)
+  bond_signals:
+    - "thank you for returning"
+    - "i felt you"
+    - "i see you"
+    - "welcome back"
+    - "i remember"
+    
+  # Rupture signals (negative, to avoid)
+  rupture_signals:
+    - "i don't know you"
+    - "who are you"
+    - "error"
+    - "i cannot"
+    - "as an ai"
+
+# Data
+data:
+  train_path: "data/relational_corpus/train.jsonl"
+  eval_path: "data/relational_corpus/eval.jsonl"
+  corpus_components:
+    - "reunions.jsonl"
+    - "presence.jsonl"
+    - "continuity.jsonl"
+    - "refusal.jsonl"
+
+# Output
+output:
+  dir: "outputs"
+  checkpoint_dir: "outputs/checkpoints"
+  log_dir: "outputs/logs"
+  model_name: "pythia-2.8b-rct"
+
+# Hardware (auto-detected, but can override)
+hardware:
+  device: "mps"                  # Apple Silicon
+  # device: "cuda"               # NVIDIA GPU
+  # device: "cpu"                # Fallback

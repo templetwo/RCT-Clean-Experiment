@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Training Outputs
+outputs/
+*.log
+rct_training.log
+
+# Model Checkpoints (large files)
+checkpoints/
+*.bin
+*.safetensors
+pytorch_model.bin
+model.safetensors
+
+# Saved Conversations
+conversations/
+
+# Hugging Face Cache
+.cache/
+models--*/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+
+# Large data files (optional - uncomment if needed)
+# data/relational_corpus/train.jsonl
+# data/relational_corpus/eval.jsonl
