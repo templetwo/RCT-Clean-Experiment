@@ -26,8 +26,7 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
     TrainingArguments,
-    Trainer,
-    DataCollatorForLanguageModeling
+    Trainer
 )
 from peft import (
     LoraConfig,
@@ -42,7 +41,8 @@ from rich.table import Table
 
 # Local imports
 from relational_loss import RelationalCoherenceLoss, RelationalCoherenceTracker
-from dataset import load_relational_corpus, RelationalDataCollator
+from dataset import load_relational_corpus
+from relational_data_collator import RelationalDataCollator
 
 console = Console()
 
@@ -183,29 +183,37 @@ class RCTTrainer(Trainer):
         """
         Override to add relational coherence loss.
         """
-        # Standard forward pass
+        # Extract text fields before forward pass (custom collator preserves them)
+        input_texts = inputs.pop("input_text", None)
+        output_texts = inputs.pop("output_text", None)
+        # Also remove metadata fields that model doesn't need
+        inputs.pop("has_presence", None)
+        inputs.pop("type", None)
+
+        # Fallback if text fields missing
+        if input_texts is None:
+            input_texts = [""] * inputs["input_ids"].shape[0]
+        if output_texts is None:
+            output_texts = [""] * inputs["input_ids"].shape[0]
+
+        # Standard forward pass (only with tensor inputs)
         outputs = model(**inputs)
         logits = outputs.logits
         labels = inputs.get("labels")
-        
-        # Get text representations for relational loss
-        # (In practice, we'd decode the tokens - simplified here)
-        input_texts = inputs.get("input_texts", [""] * logits.shape[0])
-        output_texts = inputs.get("output_texts", [""] * logits.shape[0])
-        
-        # Compute combined loss
+
+        # Compute combined loss with text fields
         loss_dict = self.relational_loss_fn(
             logits=logits,
             labels=labels,
             input_texts=input_texts,
             output_texts=output_texts
         )
-        
+
         # Track metrics
         self.coherence_tracker.update(loss_dict)
-        
+
         loss = loss_dict["total_loss"]
-        
+
         if return_outputs:
             return loss, outputs
         return loss
@@ -278,8 +286,8 @@ def train(config: Dict):
         load_best_model_at_end=True if eval_dataset else False,
     )
     
-    # Data collator
-    data_collator = DataCollatorForLanguageModeling(
+    # Data collator (custom to preserve text fields for RCT loss)
+    data_collator = RelationalDataCollator(
         tokenizer=tokenizer,
         mlm=False
     )
