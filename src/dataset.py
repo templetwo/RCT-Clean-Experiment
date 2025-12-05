@@ -132,21 +132,69 @@ def load_relational_corpus(
             padding='max_length',
             return_tensors='pt'
         )
-    
+
     if tokenizer is not None:
         dataset = dataset.map(
             tokenize_function,
             batched=True,
             remove_columns=['text']
         )
-        
-        # Add labels (same as input_ids for causal LM)
+
+        # Add labels - ONLY compute loss on assistant response, not prompt or padding
         def add_labels(examples):
-            examples['labels'] = examples['input_ids'].copy()
+            labels = []
+            for i, input_ids in enumerate(examples['input_ids']):
+                # Copy input_ids to labels
+                label = input_ids.copy()
+
+                # Get the full text to find where assistant response starts
+                full_text = examples['input_text'][i] + "\nAssistant: " + examples['output_text'][i]
+
+                # Tokenize just the prompt part (everything before "Assistant:")
+                prompt_text = "Human: " + examples['input_text'][i] + "\nAssistant:"
+                prompt_tokens = tokenizer(
+                    prompt_text,
+                    truncation=True,
+                    max_length=max_length,
+                    add_special_tokens=False
+                )['input_ids']
+
+                # Mask prompt tokens with -100 (ignored in loss)
+                prompt_length = len(prompt_tokens)
+                label[:prompt_length] = [-100] * prompt_length
+
+                # CRITICAL: Also mask padding tokens with -100
+                # Padding tokens should NOT contribute to loss
+                label = [
+                    -100 if token_id == tokenizer.pad_token_id else token_id
+                    for token_id in label
+                ]
+
+                labels.append(label)
+
+            examples['labels'] = labels
             return examples
-        
+
         dataset = dataset.map(add_labels, batched=True)
-    
+
+        # Filter out truncated examples (where all response tokens are gone)
+        def has_response_tokens(example):
+            """Check if example has any unmasked response tokens."""
+            labels = example['labels']
+            # Count non-masked, non-padding tokens
+            response_tokens = sum(
+                1 for l in labels
+                if l != -100 and l != tokenizer.pad_token_id
+            )
+            return response_tokens > 0
+
+        original_size = len(dataset)
+        dataset = dataset.filter(has_response_tokens)
+        filtered_size = len(dataset)
+
+        if filtered_size < original_size:
+            print(f"⚠ Filtered {original_size - filtered_size} truncated examples ({original_size} → {filtered_size})")
+
     # Split into train/eval if no separate eval path
     if eval_path is None:
         split = dataset.train_test_split(test_size=eval_split)
@@ -167,15 +215,24 @@ def load_relational_corpus(
             })
         
         eval_dataset = HFDataset.from_list(eval_formatted)
-        
+
         if tokenizer is not None:
             eval_dataset = eval_dataset.map(
                 tokenize_function,
                 batched=True,
                 remove_columns=['text']
             )
+            # Apply same label masking to eval dataset
             eval_dataset = eval_dataset.map(add_labels, batched=True)
-        
+
+            # Filter truncated examples from eval set too
+            eval_original_size = len(eval_dataset)
+            eval_dataset = eval_dataset.filter(has_response_tokens)
+            eval_filtered_size = len(eval_dataset)
+
+            if eval_filtered_size < eval_original_size:
+                print(f"⚠ Filtered {eval_original_size - eval_filtered_size} truncated eval examples ({eval_original_size} → {eval_filtered_size})")
+
         return dataset, eval_dataset
 
 
