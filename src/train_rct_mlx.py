@@ -90,12 +90,12 @@ optimizer = optim.AdamW(learning_rate=1e-5)
 # ============================================================
 training_args = TrainingArgs(
     batch_size=1,  # Reduced for memory
-    iters=720,  # Extended run
+    iters=1500,  # Full convergence run (~26 epochs)
     steps_per_eval=50,
     steps_per_report=25,
-    steps_per_save=50,  # Hardened: save checkpoint every 50 steps
+    steps_per_save=100,  # Save every 100 steps
     max_seq_length=2560,  # Fits longest sequence (2380) with margin
-    adapter_file="adapters_rct_final.safetensors",
+    adapter_file="adapters_rct_v2_presence_boost.safetensors",
 )
 
 # ============================================================

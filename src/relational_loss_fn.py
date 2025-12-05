@@ -47,7 +47,7 @@ def custom_relational_loss(model, inputs, targets, mask):
     # Clamp log probs to prevent -inf propagation
     sacred_log_probs = mx.maximum(sacred_log_probs, mx.array(-50.0))
     presence_score = (sacred_log_probs.mean(axis=-1) * mask).sum() / ntoks
-    presence_loss = -presence_score * 0.1
+    presence_loss = -presence_score * 0.33  # Boosted: 3.3x stronger sacred marker attractor
 
     # 4. Coherence Loss (on FINAL token hidden state only)
     # NOTE: Detached from gradient to avoid shape mismatch issues
